@@ -1,0 +1,6 @@
+{
+  "name": "AL QUR'AAN - Coran & Tafsir Wolof",
+  "description": "Application de lecture du Saint Coran (Mushaf Madinah 604 pages), recherche de versets et Tafsir authentique traduit en wolof.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

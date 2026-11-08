@@ -1,0 +1,56 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --color-islamic-green: #176B45;
+    --color-parchment: #F8F5EA;
+    --color-gold: #C5A45B;
+    --color-charcoal: #202020;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+.font-quran {
+  font-family: 'Amiri Quran', 'Amiri', 'Noto Naskh Arabic', serif;
+  font-feature-settings: "cv01" on, "cv02" on;
+}
+
+.font-arabic {
+  font-family: 'Noto Naskh Arabic', 'Amiri', serif;
+}
+
+.font-title {
+  font-family: 'Cinzel', serif;
+}
+
+/* Custom smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #C5A45B88;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #176B45CC;
+}
+
+/* Page flip transition styling */
+.mushaf-shadow {
+  box-shadow: 0 10px 30px -5px rgba(23, 107, 69, 0.15), 0 20px 25px -5px rgba(0, 0, 0, 0.08);
+}
+
+.mushaf-spine {
+  background: linear-gradient(to right, rgba(0,0,0,0.12), rgba(0,0,0,0.02) 20%, transparent);
+}
