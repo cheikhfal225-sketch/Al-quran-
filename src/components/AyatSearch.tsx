@@ -38,8 +38,15 @@ export const AyatSearch: React.FC<AyatSearchProps> = ({
   const results = searchAyat(query);
 
   const handleCopy = (verse: VerseData) => {
-    const textToCopy = `${verse.text_uthmani}\n\nTekki ci Wolof (${verse.id}):\n${verse.translation_wolof}\n\n${verse.tafsir_wolof || ''}`;
-    navigator.clipboard?.writeText(textToCopy);
+    let textToCopy = `${verse.text_uthmani}\n\nAyat ${verse.ayah_number} (${verse.id})`;
+    if (language === 'wo') {
+      textToCopy += `\nTekki ci Wolof:\n${verse.translation_wolof || t.wolofUnavailable}\n\n${verse.tafsir_wolof || ''}`;
+    } else if (language === 'fr') {
+      textToCopy += `\nTraduction française:\n${verse.translation_french || t.translationUnavailable}`;
+    } else if (language === 'en') {
+      textToCopy += `\nEnglish Translation:\n${verse.translation_english || t.translationUnavailable}`;
+    }
+    navigator.clipboard?.writeText(textToCopy.trim());
     setCopiedId(verse.id);
     setTimeout(() => setCopiedId(null), 2500);
   };
@@ -210,20 +217,59 @@ export const AyatSearch: React.FC<AyatSearchProps> = ({
                 {verse.text_uthmani}
               </p>
 
-              {/* Wolof Translation */}
-              <div className="bg-[#176B45]/5 dark:bg-white/5 rounded-xl p-3 border-l-3 border-[#C5A45B] mb-2.5">
-                <p className="text-[11px] font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider mb-1">
-                  Tekki ci Wolof:
-                </p>
-                <p className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-relaxed">
-                  {verse.translation_wolof}
-                </p>
-              </div>
+              {/* 1. WOLOF LANGUAGE: Show ONLY Wolof */}
+              {language === 'wo' && (
+                <div className="bg-[#176B45]/5 dark:bg-white/5 rounded-xl p-3 border-l-3 border-[#C5A45B] mb-2.5">
+                  <p className="text-[11px] font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider mb-1">
+                    Tekki ci Wolof:
+                  </p>
+                  {verse.translation_wolof ? (
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-relaxed">
+                      {verse.translation_wolof}
+                    </p>
+                  ) : (
+                    <p className="text-sm italic text-amber-800/80 dark:text-amber-300/80">
+                      {t.wolofUnavailable}
+                    </p>
+                  )}
+                </div>
+              )}
 
-              {/* French Translation */}
-              <p className="text-xs text-muted-foreground italic mb-3">
-                « {verse.translation_french} »
-              </p>
+              {/* 2. FRENCH LANGUAGE: Show ONLY French */}
+              {language === 'fr' && (
+                <div className="bg-[#176B45]/5 dark:bg-white/5 rounded-xl p-3 border-l-3 border-[#176B45] mb-2.5">
+                  <p className="text-[11px] font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider mb-1">
+                    Traduction française:
+                  </p>
+                  {verse.translation_french ? (
+                    <p className="text-sm font-normal text-slate-800 dark:text-slate-200 leading-relaxed">
+                      « {verse.translation_french} »
+                    </p>
+                  ) : (
+                    <p className="text-sm italic text-slate-500">
+                      {t.translationUnavailable}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* 3. ENGLISH LANGUAGE: Show ONLY English */}
+              {language === 'en' && (
+                <div className="bg-[#176B45]/5 dark:bg-white/5 rounded-xl p-3 border-l-3 border-[#176B45] mb-2.5">
+                  <p className="text-[11px] font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider mb-1">
+                    English Translation:
+                  </p>
+                  {verse.translation_english ? (
+                    <p className="text-sm font-normal text-slate-800 dark:text-slate-200 leading-relaxed">
+                      "{verse.translation_english}"
+                    </p>
+                  ) : (
+                    <p className="text-sm italic text-slate-500">
+                      {t.translationUnavailable}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Expandable Wolof Tafsir */}
               {verse.tafsir_wolof && (

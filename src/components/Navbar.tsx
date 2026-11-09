@@ -10,11 +10,12 @@ import {
   Moon,
   Sun,
   Globe,
+  BarChart3,
 } from 'lucide-react';
 import { AppLanguage, ThemeMode } from '../types/quran';
 import { getTranslation } from '../data/translations';
 
-export type NavTab = 'mushaf' | 'fahrasat' | 'search' | 'tafsir' | 'favorites' | 'admin';
+export type NavTab = 'mushaf' | 'fahrasat' | 'search' | 'tafsir' | 'coverage' | 'favorites' | 'admin';
 
 interface NavbarProps {
   activeTab: NavTab;
@@ -44,6 +45,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'fahrasat', label: t.fahrasat, icon: <List className="w-4 h-4" /> },
     { id: 'search', label: t.searchAyat, icon: <Search className="w-4 h-4" /> },
     { id: 'tafsir', label: t.tafsirWolof, icon: <BookMarked className="w-4 h-4" /> },
+    { id: 'coverage', label: t.coverageReport, icon: <BarChart3 className="w-4 h-4" /> },
     { id: 'favorites', label: t.favorites, icon: <Heart className="w-4 h-4" /> },
   ];
 
@@ -109,6 +111,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <option value="wo" className="bg-[#176B45] text-white">Wolof</option>
                 <option value="fr" className="bg-[#176B45] text-white">Français</option>
                 <option value="ar" className="bg-[#176B45] text-white">العربية</option>
+                <option value="en" className="bg-[#176B45] text-white">English</option>
               </select>
             </div>
 
@@ -149,7 +152,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Mobile-First Bottom Tab Bar (Ergonomic thumb zone, height 60px <= 15% viewport) */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#176B45] text-[#F8F5EA] border-t border-[#C5A45B]/40 shadow-lg pb-safe">
-        <div className="grid grid-cols-5 items-center h-15">
+        <div className="grid grid-cols-6 items-center h-15">
           {navLinks.map((link) => {
             const isActive = activeTab === link.id;
             return (

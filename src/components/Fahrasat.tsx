@@ -182,10 +182,10 @@ export const Fahrasat: React.FC<FahrasatProps> = ({
                   <button
                     onClick={() => onOpenTafsir(surah.id)}
                     className="py-1.5 px-3 bg-[#C5A45B]/15 hover:bg-[#C5A45B]/30 text-[#176B45] dark:text-[#C5A45B] text-xs font-semibold rounded-lg border border-[#C5A45B]/40 transition-colors flex items-center gap-1"
-                    title="Voir le Tafsir Wolof"
+                    title="Voir le texte intégral et le Tafsir Wolof"
                   >
                     <BookMarked className="w-3.5 h-3.5" />
-                    <span>Tafsir</span>
+                    <span>Texte & Tafsir</span>
                   </button>
                 </div>
               </div>

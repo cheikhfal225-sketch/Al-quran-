@@ -5,6 +5,7 @@ import { Fahrasat } from './components/Fahrasat';
 import { AyatSearch } from './components/AyatSearch';
 import { TafsirWolofView } from './components/TafsirWolofView';
 import { FavoritesView } from './components/FavoritesView';
+import { CoverageReportView } from './components/CoverageReportView';
 import { AdminView } from './components/AdminView';
 import { AudioBar } from './components/AudioBar';
 import { SettingsModal } from './components/SettingsModal';
@@ -179,6 +180,15 @@ export default function App() {
             onOpenMushafPage={handleOpenPage}
             onPlayAudio={handlePlayAudio}
             selectedReciter={selectedReciter}
+          />
+        )}
+
+        {activeTab === 'coverage' && (
+          <CoverageReportView
+            language={language}
+            onOpenPage={handleOpenPage}
+            onOpenSurahTafsir={handleOpenTafsir}
+            onOpenAdmin={() => setActiveTab('admin')}
           />
         )}
 

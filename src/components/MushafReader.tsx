@@ -7,6 +7,7 @@ import {
   Maximize2,
   Minimize2,
   Bookmark,
+  BookmarkCheck,
   BookOpen,
   Volume2,
   Sparkles,
@@ -15,21 +16,33 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
-  Compass,
+  Check,
+  X,
+  MessageSquare,
+  Tag,
+  Share2,
+  Languages,
+  Type,
+  Sliders,
+  Clock,
 } from 'lucide-react';
-import { AppLanguage, ThemeMode, ReciterId } from '../types/quran';
+import { AppLanguage, ThemeMode, ReciterId, VerseData, BookmarkItem } from '../types/quran';
 import { getTranslation } from '../data/translations';
 import {
   getPageMetadata,
   getMushafPageImageUrl,
   getVersesForPage,
+  fetchVersesForPage,
+  getSurahById,
   isPageBookmarked,
+  getBookmarkForPage,
   addBookmark,
   removeBookmark,
   getBookmarks,
   saveReadingProgress,
   getAyahAudioUrl,
   getSurahAudioUrl,
+  fetchFullSurahText,
 } from '../services/quranService';
 
 interface MushafReaderProps {
@@ -68,23 +81,68 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
   const [imageLoading, setImageLoading] = useState<boolean>(true);
   const [sliderValue, setSliderValue] = useState<number>(page);
 
+  // Bookmark modal & toast state
+  const [isBookmarkModalOpen, setIsBookmarkModalOpen] = useState<boolean>(false);
+  const [bookmarkNote, setBookmarkNote] = useState<string>('');
+  const [bookmarkCategory, setBookmarkCategory] = useState<BookmarkItem['category']>('general');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Verses on current page (full text support)
+  const [pageVerses, setPageVerses] = useState<VerseData[]>(getVersesForPage(page));
+  const [loadingPageVerses, setLoadingPageVerses] = useState<boolean>(false);
+
+  // New Bilingual Mode States (Demande 6: Bouton « التفسير والترجمة – Tekki Wolof »)
+  const [isBilingualView, setIsBilingualView] = useState<boolean>(false);
+  const [showWolofTranslation, setShowWolofTranslation] = useState<boolean>(true);
+  const [arabicFontSize, setArabicFontSize] = useState<number>(26); // px for Arabic calligraphy
+  const [expandedTafsirId, setExpandedTafsirId] = useState<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const touchStartXRef = useRef<number>(0);
   const touchEndXRef = useRef<number>(0);
 
   const pageMeta = getPageMetadata(page);
-  const versesOnPage = getVersesForPage(page);
   const pageImageUrls = getMushafPageImageUrl(page);
 
-  // Sync bookmark state and reading progress
+  // Sync bookmark state, reading progress, and load full text verses for this page
   useEffect(() => {
-    setBookmarked(isPageBookmarked(page));
+    const isBm = isPageBookmarked(page);
+    setBookmarked(isBm);
+    const existingBm = getBookmarkForPage(page);
+    if (existingBm) {
+      setBookmarkNote(existingBm.note || '');
+      setBookmarkCategory(existingBm.category || 'general');
+    } else {
+      setBookmarkNote('');
+      setBookmarkCategory('general');
+    }
+
     saveReadingProgress(page, pageMeta.surah.id);
     setSliderValue(page);
     setImageErrorIndex(0);
     setImageLoading(true);
     if (onPageChange) onPageChange(page);
+
+    // Initial local verses
+    const local = getVersesForPage(page);
+    setPageVerses(local);
+
+    // Asynchronously fetch complete authentic verses for ANY of the 604 pages from AlQuran Cloud
+    let isCancelled = false;
+    setLoadingPageVerses(true);
+    fetchVersesForPage(page).then((verses) => {
+      if (!isCancelled && verses && verses.length > 0) {
+        setPageVerses(verses);
+        setLoadingPageVerses(false);
+      }
+    }).catch(() => {
+      if (!isCancelled) setLoadingPageVerses(false);
+    });
+
+    return () => {
+      isCancelled = true;
+    };
   }, [page]);
 
   // Reset inactivity timer to automatically hide UI during prolonged reading
@@ -99,14 +157,13 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
 
     // Only auto-hide if in fullscreen OR if autoHideUI option is activated
     if (isFullscreen || autoHideUI) {
-      // Don't auto-hide if Tafsir drawer is open
-      if (showTafsirDrawer) return;
+      if (showTafsirDrawer || isBookmarkModalOpen) return;
 
       inactivityTimerRef.current = setTimeout(() => {
         setIsUiHidden(true);
-      }, 3500); // Hide after 3.5 seconds of quiet reading
+      }, 3500);
     }
-  }, [isFullscreen, autoHideUI, isUiHidden, showTafsirDrawer]);
+  }, [isFullscreen, autoHideUI, isUiHidden, showTafsirDrawer, isBookmarkModalOpen]);
 
   // Activity listeners when auto-hide is active
   useEffect(() => {
@@ -144,11 +201,13 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
         exitFullscreen();
       } else if (e.key.toLowerCase() === 'f') {
         toggleFullscreen();
+      } else if (e.key.toLowerCase() === 'b') {
+        openBookmarkModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [page, isFullscreen]);
+  }, [page, isFullscreen, bookmarked]);
 
   const goToNextPage = () => {
     if (page < 604) setPage((p) => p + 1);
@@ -178,29 +237,55 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
     }
   };
 
-  const toggleBookmark = () => {
-    if (bookmarked) {
-      const all = getBookmarks();
-      const target = all.find((b) => b.type === 'page' && b.page_number === page);
-      if (target) removeBookmark(target.id);
-      setBookmarked(false);
-    } else {
-      addBookmark({
-        type: 'page',
-        page_number: page,
-        surah_id: pageMeta.surah.id,
-        title: `${pageMeta.surah.name_simple} (${pageMeta.surah.name_arabic})`,
-        preview_text: `Xët ${page} · Juz ${pageMeta.juz.juz_number} · ${pageMeta.surah.name_wolof}`,
-        category: 'general',
-      });
-      setBookmarked(true);
+  // Open modal to add or edit bookmark
+  const openBookmarkModal = () => {
+    const existing = getBookmarkForPage(page);
+    if (existing) {
+      setBookmarkNote(existing.note || '');
+      setBookmarkCategory(existing.category || 'general');
     }
+    setIsBookmarkModalOpen(true);
+  };
+
+  // Save Bookmark into database
+  const handleSaveBookmark = () => {
+    addBookmark({
+      type: 'page',
+      page_number: page,
+      surah_id: pageMeta.surah.id,
+      title: `${pageMeta.surah.name_simple} (${pageMeta.surah.name_arabic})`,
+      preview_text: `Xët ${page} · Juz ${pageMeta.juz.juz_number} · ${pageMeta.surah.name_wolof}`,
+      category: bookmarkCategory,
+      note: bookmarkNote.trim() || undefined,
+    });
+    setBookmarked(true);
+    setIsBookmarkModalOpen(false);
+    showToast(`✓ Page ${page} (${pageMeta.surah.name_simple}) enregistrée dans vos signets !`);
+  };
+
+  // Remove bookmark from database
+  const handleRemoveBookmark = () => {
+    const all = getBookmarks();
+    const target = all.find((b) => b.type === 'page' && b.page_number === page);
+    if (target) {
+      removeBookmark(target.id);
+    }
+    setBookmarked(false);
+    setIsBookmarkModalOpen(false);
+    showToast(`Signet de la page ${page} supprimé.`);
+  };
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
   };
 
   const toggleFullscreen = () => {
     const nextState = !isFullscreen;
     setIsFullscreen(nextState);
-    setAutoHideUI(nextState); // Automatically enable auto-hide in fullscreen mode
+    setAutoHideUI(nextState);
     setIsUiHidden(false);
 
     if (onToggleFullscreen) {
@@ -259,17 +344,24 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
           ? 'fixed inset-0 z-50 overflow-y-auto bg-black flex flex-col items-center justify-center p-2 sm:p-4'
           : 'max-w-5xl mx-auto flex flex-col items-center pb-20 px-2 sm:px-4 pt-2'
       }`}
-      onClick={(e) => {
-        // Clicking directly on the background or page toggles UI visibility
+      onClick={() => {
         if (isFullscreen || autoHideUI) {
           setIsUiHidden(!isUiHidden);
         }
       }}
     >
+      {/* ================= TOAST NOTIFICATION ================= */}
+      {toastMessage && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-[#176B45] text-white text-xs sm:text-sm font-semibold shadow-2xl border border-[#C5A45B] animate-in fade-in slide-in-from-top-4 duration-300 flex items-center gap-2">
+          <BookmarkCheck className="w-4 h-4 text-[#C5A45B] shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* ================= FLOATING ZEN MODE DISCRETE HINT PILL ================= */}
       {(isFullscreen || autoHideUI) && (
         <div
-          className={`fixed top-3 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 text-white/90 text-xs backdrop-blur-md border border-[#C5A45B]/40 shadow-xl ${
+          className={`fixed top-3 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/80 text-white/90 text-xs backdrop-blur-md border border-[#C5A45B]/40 shadow-xl ${
             isUiHidden
               ? 'opacity-40 hover:opacity-100 scale-95'
               : 'opacity-100 scale-100'
@@ -340,8 +432,31 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
           </span>
         </div>
 
-        {/* Right: Actions (Immersion Toggle, Audio, Bookmark, Zoom, Fullscreen, Tafsir) */}
+        {/* Right: Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* PROMINENT "AJOUTER AUX SIGNETS" BUTTON (Demande 1) */}
+          <button
+            onClick={openBookmarkModal}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 ${
+              bookmarked
+                ? 'bg-[#C5A45B] text-[#176B45] ring-2 ring-white/30'
+                : 'bg-white/15 hover:bg-white/25 text-[#F8F5EA] border border-[#C5A45B]/50'
+            }`}
+            title="Enregistrer la page courante dans la base de données des signets"
+          >
+            {bookmarked ? (
+              <>
+                <BookmarkCheck className="w-3.5 h-3.5 fill-current" />
+                <span>Page {page} aux signets</span>
+              </>
+            ) : (
+              <>
+                <Bookmark className="w-3.5 h-3.5" />
+                <span>Ajouter aux signets</span>
+              </>
+            )}
+          </button>
+
           {/* Auto-Hide UI Immersion Toggle Button */}
           <button
             onClick={() => {
@@ -376,19 +491,6 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
             <Volume2 className="w-4 h-4" />
           </button>
 
-          {/* Bookmark */}
-          <button
-            onClick={toggleBookmark}
-            className={`p-1.5 rounded transition-colors ${
-              bookmarked
-                ? 'text-[#C5A45B] bg-black/30'
-                : 'text-white/80 hover:text-[#C5A45B] hover:bg-black/20'
-            }`}
-            title={bookmarked ? t.bookmarked : t.bookmarkPage}
-          >
-            <Bookmark className={`w-4 h-4 ${bookmarked ? 'fill-[#C5A45B]' : ''}`} />
-          </button>
-
           {/* Zoom controls */}
           <div className="hidden md:flex items-center bg-black/20 rounded border border-[#C5A45B]/30">
             <button
@@ -410,7 +512,7 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
             </button>
           </div>
 
-          {/* Fullscreen Button with auto-hide */}
+          {/* Fullscreen Button */}
           <button
             onClick={toggleFullscreen}
             className={`p-1.5 rounded transition-colors ${
@@ -423,6 +525,22 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
 
+          {/* PROMINENT BUTTON: « التفسير والترجمة – Tekki Wolof » (Demande 6) */}
+          <button
+            onClick={() => setIsBilingualView(!isBilingualView)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 ${
+              isBilingualView
+                ? 'bg-[#C5A45B] text-[#176B45] ring-2 ring-white/50'
+                : 'bg-white/20 hover:bg-white/30 text-white border border-[#C5A45B]/60'
+            }`}
+            title="Basculer entre le Mushaf Madina calligraphique et la lecture bilingue Arabe & Wolof"
+          >
+            <Languages className="w-3.5 h-3.5 text-[#C5A45B] fill-current" />
+            <span className="font-arabic font-bold text-sm">التفسير والترجمة</span>
+            <span className="hidden sm:inline font-sans">– Tekki Wolof</span>
+            {isBilingualView && <Check className="w-3.5 h-3.5 ml-0.5 text-[#176B45]" />}
+          </button>
+
           {/* Tafsir Drawer Toggle */}
           <button
             onClick={() => setShowTafsirDrawer(!showTafsirDrawer)}
@@ -431,9 +549,10 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
                 ? 'bg-[#C5A45B] text-[#176B45]'
                 : 'bg-white/10 hover:bg-white/20 text-[#F8F5EA]'
             }`}
+            title="Ouvrir le panneau rétractable des versets et Tafsir"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Tafsir Wolof</span>
+            <span className="hidden sm:inline">Panneau Tafsir</span>
             {showTafsirDrawer ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </button>
         </div>
@@ -445,7 +564,7 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Invisible tap zones for turning pages without clicking buttons */}
+        {/* Invisible tap zones for turning pages */}
         <div
           className="absolute left-0 top-0 bottom-0 w-1/6 z-20 cursor-w-resize"
           onClick={(e) => {
@@ -483,8 +602,7 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
         <div
           style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top center' }}
           className={`relative w-full max-w-2xl rounded-2xl p-3 sm:p-6 mushaf-shadow transition-all duration-300 ${getThemeWrapperClass()}`}
-          onClick={(e) => {
-            // Tapping on the frame resets timer or toggles UI
+          onClick={() => {
             if (isFullscreen || autoHideUI) {
               setIsUiHidden(!isUiHidden);
             }
@@ -506,79 +624,267 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
               </div>
             </div>
 
-            {/* Page Content: High-Resolution Authentic Madinah Mushaf Page */}
-            <div className="relative min-h-[500px] sm:min-h-[660px] flex flex-col items-center justify-center overflow-hidden rounded-lg">
-              {/* Spinner while image is fetching */}
-              {imageLoading && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/40 dark:bg-black/40 z-10 backdrop-blur-[1px]">
-                  <div className="w-10 h-10 border-3 border-[#176B45] border-t-transparent rounded-full animate-spin"></div>
-                  <span className="mt-2 text-xs text-[#176B45] font-medium font-arabic">
-                    جاري تحميل الصفحة {page}...
-                  </span>
-                </div>
-              )}
+            {/* Page Content: Either Mode Bilingue Arabe-Wolof OR High-Resolution Scanned Madinah Page */}
+            {isBilingualView ? (
+              <div className="w-full py-2 space-y-4 animate-in fade-in duration-300">
+                {/* Bilingual Page Controls Sub-bar */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-black/5 dark:bg-white/5 border border-[#C5A45B]/30 text-xs">
+                  {/* Toggle show / hide Wolof translation */}
+                  <button
+                    onClick={() => setShowWolofTranslation(!showWolofTranslation)}
+                    className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-colors ${
+                      showWolofTranslation
+                        ? 'bg-[#176B45] text-white shadow-xs'
+                        : 'bg-black/10 dark:bg-white/10 text-muted-foreground'
+                    }`}
+                    title={showWolofTranslation ? t.hideWolofTranslation : t.showWolofTranslation}
+                  >
+                    {showWolofTranslation ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                    <span>{showWolofTranslation ? t.hideWolofTranslation : t.showWolofTranslation}</span>
+                  </button>
 
-              {/* Scanned Madinah Mushaf Page Image */}
-              <img
-                src={currentImageUrl}
-                alt={`Mushaf Page ${page} - Sourate ${pageMeta.surah.name_simple}`}
-                referrerPolicy="no-referrer"
-                onLoad={() => setImageLoading(false)}
-                onError={() => {
-                  if (imageErrorIndex < pageImageUrls.length - 1) {
-                    setImageErrorIndex((prev) => prev + 1);
-                  } else {
-                    setImageLoading(false);
-                  }
-                }}
-                className={`w-full h-auto max-h-[750px] object-contain rounded transition-opacity duration-300 ${
-                  imageLoading ? 'opacity-0' : 'opacity-100'
-                } ${theme === 'dark' ? 'invert contrast-125 brightness-90 hue-rotate-180' : ''}`}
-              />
-
-              {/* Offline / Typographic Canvas Fallback if image network fails */}
-              {imageErrorIndex >= pageImageUrls.length - 1 && !imageLoading && (
-                <div className="w-full py-6 px-4 text-center">
-                  <div className="p-3 bg-[#176B45]/10 rounded-lg border border-[#C5A45B]/40 mb-4">
-                    <p className="font-arabic text-xl text-[#176B45] font-bold">
-                      بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-                    </p>
-                    <p className="text-xs text-[#C5A45B] mt-1">
-                      {pageMeta.surah.name_simple} · {pageMeta.surah.name_wolof}
-                    </p>
+                  {/* Arabic Font Size Controls */}
+                  <div className="flex items-center gap-1 bg-black/10 dark:bg-white/10 px-2 py-1 rounded-lg">
+                    <span className="text-[11px] font-semibold text-muted-foreground mr-1 flex items-center gap-1">
+                      <Type className="w-3 h-3" />
+                      <span>{t.fontSize}:</span>
+                    </span>
+                    <button
+                      onClick={() => setArabicFontSize((s) => Math.max(18, s - 2))}
+                      className="w-6 h-6 rounded bg-white dark:bg-black/30 text-xs font-bold flex items-center justify-center hover:bg-[#C5A45B] hover:text-[#176B45] transition-colors"
+                      title={t.decreaseText}
+                    >
+                      A-
+                    </button>
+                    <span className="text-xs font-mono font-bold text-[#176B45] dark:text-[#C5A45B] px-1">
+                      {arabicFontSize}px
+                    </span>
+                    <button
+                      onClick={() => setArabicFontSize((s) => Math.min(42, s + 2))}
+                      className="w-6 h-6 rounded bg-white dark:bg-black/30 text-xs font-bold flex items-center justify-center hover:bg-[#C5A45B] hover:text-[#176B45] transition-colors"
+                      title={t.increaseText}
+                    >
+                      A+
+                    </button>
                   </div>
 
-                  {versesOnPage.length > 0 ? (
-                    <div className="space-y-4 text-right" dir="rtl">
-                      {versesOnPage.map((v) => (
+                  {/* Page Translation Status Badge */}
+                  <div className="text-[11px] font-semibold">
+                    {pageVerses.length > 0 && pageVerses.every((v) => v.translation_wolof && v.validation_status !== 'missing' && v.validation_status !== 'pending') ? (
+                      <span className="px-2.5 py-1 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 rounded-lg flex items-center gap-1 font-bold">
+                        <Check className="w-3 h-3" />
+                        <span>Xët mu mat (100% Wolof)</span>
+                      </span>
+                    ) : pageVerses.some((v) => v.translation_wolof) ? (
+                      <span className="px-2.5 py-1 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 rounded-lg flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        <span>Partielle ({pageVerses.filter((v) => v.translation_wolof).length}/{pageVerses.length} traduits)</span>
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-lg">
+                        ○ En attente de traduction
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Loading indicator if online fetch is in progress */}
+                {loadingPageVerses && (
+                  <div className="py-4 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-[#176B45] border-t-transparent rounded-full animate-spin"></div>
+                    <span>Chargement des versets de la page {page}...</span>
+                  </div>
+                )}
+
+                {/* All Verses on this Page in Exact Sequential Order */}
+                {pageVerses.length > 0 ? (
+                  <div className="space-y-6">
+                    {pageVerses.map((v, idx) => {
+                      const surah = getSurahById(v.surah_id) || pageMeta.surah;
+                      const isFirstInSurah = v.ayah_number === 1;
+                      const isPageFirstVerse = idx === 0;
+
+                      return (
                         <div
                           key={v.id}
-                          className="p-3 rounded-lg bg-black/5 dark:bg-white/5 border border-transparent hover:border-[#C5A45B]/40 transition-colors"
+                          className="p-4 sm:p-5 rounded-2xl bg-black/5 dark:bg-white/5 border border-[#C5A45B]/30 hover:border-[#176B45] transition-all"
                         >
-                          <p className="font-quran text-xl sm:text-2xl leading-loose text-justify text-[#202020] dark:text-[#F8F5EA]">
+                          {/* Surah Header Banner if first verse of a Surah on this page */}
+                          {(isFirstInSurah || (isPageFirstVerse && v.ayah_number === 1)) && (
+                            <div className="mb-4 p-3 bg-[#176B45] text-white rounded-xl text-center border border-[#C5A45B]/40 shadow-xs">
+                              <span className="font-arabic text-xl sm:text-2xl font-bold block mb-0.5">
+                                سُورَةُ {surah.name_arabic}
+                              </span>
+                              <p className="text-xs text-[#C5A45B] font-bold">
+                                Saar {surah.name_wolof} · {surah.name_simple} · {surah.verses_count} {t.verses}
+                              </p>
+                              {surah.id !== 9 && (
+                                <p className="font-arabic text-lg sm:text-xl font-semibold mt-2 pt-2 border-t border-[#C5A45B]/30 text-[#F8F5EA]">
+                                  بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Top Ayah Meta & Action Line */}
+                          <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-2 mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-md bg-[#176B45] text-white flex items-center justify-center font-bold text-xs font-mono">
+                                {v.ayah_number}
+                              </span>
+                              <span className="text-xs font-bold text-[#176B45] dark:text-[#C5A45B]">
+                                {surah.name_simple} ({v.id})
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              {/* Listen Ayah Audio */}
+                              <button
+                                onClick={() =>
+                                  onPlayAudio({
+                                    title: `${surah.name_simple} : Ayah ${v.ayah_number}`,
+                                    audioUrl: getAyahAudioUrl(v.surah_id, v.ayah_number, selectedReciter),
+                                    surahId: v.surah_id,
+                                    ayahNumber: v.ayah_number,
+                                  })
+                                }
+                                className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-[#176B45] rounded transition-colors text-xs flex items-center gap-1"
+                                title={t.listenRecitation}
+                              >
+                                <Volume2 className="w-3.5 h-3.5 text-[#176B45]" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Arabic Uthmani Text */}
+                          <p
+                            className="font-quran text-right leading-[2.4] text-[#176B45] dark:text-[#C5A45B] mb-3 select-text"
+                            style={{ fontSize: `${arabicFontSize}px` }}
+                            dir="rtl"
+                          >
                             {v.text_uthmani}
-                            <span className="inline-flex items-center justify-center w-7 h-7 mx-2 text-xs font-bold text-[#176B45] dark:text-[#C5A45B] border border-[#C5A45B] rounded-full">
+                            <span className="inline-flex items-center justify-center w-8 h-8 mx-2 text-xs font-bold text-[#176B45] dark:text-[#C5A45B] border border-[#C5A45B] rounded-full shadow-xs bg-[#C5A45B]/10">
                               {toArabicNumerals(v.ayah_number)}
                             </span>
                           </p>
-                          <p className="text-left text-xs font-sans text-muted-foreground mt-2" dir="ltr">
-                            <span className="font-semibold text-[#176B45]">{v.id}</span>: {v.translation_wolof}
-                          </p>
+
+                          {/* Wolof Translation Box (Sous chaque verset) */}
+                          {showWolofTranslation && (
+                            <div className="mt-3 bg-[#176B45]/5 dark:bg-white/5 rounded-xl p-3.5 border-l-4 border-[#C5A45B]">
+                              <div className="flex items-center justify-between mb-1.5">
+                                <span className="text-[11px] font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider">
+                                  Tekki ci Wolof:
+                                </span>
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                  v.translation_wolof
+                                    ? v.validation_status === 'pending'
+                                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                }`}>
+                                  {v.translation_wolof
+                                    ? v.validation_status === 'pending'
+                                      ? '⏳ En attente de validation'
+                                      : '✓ Validé'
+                                    : '○ Non traduit'}
+                                </span>
+                              </div>
+
+                              {v.translation_wolof ? (
+                                <p className="text-sm sm:text-base font-medium text-slate-800 dark:text-slate-100 leading-relaxed font-sans">
+                                  {v.translation_wolof}
+                                </p>
+                              ) : (
+                                <p className="text-sm italic text-amber-800/90 dark:text-amber-300/90 font-sans">
+                                  {t.wolofUnavailable}
+                                </p>
+                              )}
+
+                              {/* Source label */}
+                              {v.source && (
+                                <p className="text-[10px] text-muted-foreground mt-1.5 italic">
+                                  Source : {v.source}
+                                </p>
+                              )}
+
+                              {/* Wolof Tafsir if available */}
+                              {v.tafsir_wolof && (
+                                <div className="mt-2.5 pt-2 border-t border-black/5 dark:border-white/5">
+                                  <button
+                                    onClick={() => setExpandedTafsirId(expandedTafsirId === v.id ? null : v.id)}
+                                    className="text-xs font-semibold text-[#176B45] dark:text-[#C5A45B] hover:underline flex items-center gap-1"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    <span>{expandedTafsirId === v.id ? t.hideTafsir : t.showTafsir}</span>
+                                    {expandedTafsirId === v.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                  </button>
+
+                                  {expandedTafsirId === v.id && (
+                                    <div className="mt-2 p-3 bg-[#F8F5EA] dark:bg-black/30 rounded-xl border border-[#C5A45B]/30 text-xs text-slate-700 dark:text-slate-300 whitespace-pre-line leading-relaxed animate-in fade-in">
+                                      {v.tafsir_wolof}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="py-8 text-center text-muted-foreground">
-                      <BookOpen className="w-10 h-10 mx-auto text-[#C5A45B] mb-2 opacity-60" />
-                      <p className="text-sm font-medium">Page {page} - {pageMeta.surah.name_simple}</p>
-                      <p className="text-xs mt-1">
-                        Utilisez le visualiseur ou connectez-vous pour précharger les 604 pages en haute définition.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-muted-foreground">
+                    <BookOpen className="w-10 h-10 mx-auto text-[#C5A45B] mb-2 opacity-60" />
+                    <p className="text-sm font-medium">Page {page} - {pageMeta.surah.name_simple}</p>
+                    <p className="text-xs mt-1">
+                      Connexion au corpus des 604 pages en cours...
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Mode Calligraphique Scanné Authentique Madinah */
+              <div className="relative min-h-[500px] sm:min-h-[660px] flex flex-col items-center justify-center overflow-hidden rounded-lg">
+                {imageLoading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/40 dark:bg-black/40 z-10 backdrop-blur-[1px]">
+                    <div className="w-10 h-10 border-3 border-[#176B45] border-t-transparent rounded-full animate-spin"></div>
+                    <span className="mt-2 text-xs text-[#176B45] font-medium font-arabic">
+                      جاري تحميل الصفحة {page}...
+                    </span>
+                  </div>
+                )}
+
+                {/* Scanned Madinah Mushaf Page Image */}
+                <img
+                  src={currentImageUrl}
+                  alt={`Mushaf Page ${page} - Sourate ${pageMeta.surah.name_simple}`}
+                  referrerPolicy="no-referrer"
+                  onLoad={() => setImageLoading(false)}
+                  onError={() => {
+                    if (imageErrorIndex < pageImageUrls.length - 1) {
+                      setImageErrorIndex((prev) => prev + 1);
+                    } else {
+                      setImageLoading(false);
+                    }
+                  }}
+                  className={`w-full h-auto max-h-[750px] object-contain rounded transition-opacity duration-300 ${
+                    imageLoading ? 'opacity-0' : 'opacity-100'
+                  } ${theme === 'dark' ? 'invert contrast-125 brightness-90 hue-rotate-180' : ''}`}
+                />
+
+                {/* Fallback in case of image failure */}
+                {imageErrorIndex >= pageImageUrls.length - 1 && !imageLoading && (
+                  <div className="w-full py-6 px-4 text-center">
+                    <button
+                      onClick={() => setIsBilingualView(true)}
+                      className="px-4 py-2 bg-[#176B45] hover:bg-[#1f8054] text-white text-xs font-bold rounded-lg shadow"
+                    >
+                      Basculer en mode lecture Arabe & Wolof
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Bottom Page Footer inside Border */}
             <div className="flex items-center justify-between border-t border-[#C5A45B]/40 pt-2 mt-3 text-xs text-muted-foreground">
@@ -609,9 +915,9 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
         </button>
       </div>
 
-      {/* ================= FAST PAGE JUMP SLIDER & INPUT ================= */}
+      {/* ================= FAST PAGE JUMP SLIDER & SIGNET QUICK ACTION ================= */}
       <div
-        className={`w-full max-w-2xl mt-4 bg-white/70 dark:bg-black/30 backdrop-blur-sm rounded-xl p-3 border border-[#C5A45B]/30 shadow-sm flex flex-col sm:flex-row items-center gap-3 transition-all duration-500 ${
+        className={`w-full max-w-2xl mt-4 bg-white/80 dark:bg-black/40 backdrop-blur-sm rounded-xl p-3 border border-[#C5A45B]/30 shadow-sm flex flex-col sm:flex-row items-center gap-3 transition-all duration-500 ${
           isUiHidden
             ? 'opacity-0 translate-y-6 pointer-events-none'
             : 'opacity-100 translate-y-0'
@@ -655,12 +961,135 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
           title="Faire glisser pour changer de page"
         />
 
-        <div className="text-[11px] text-[#176B45] dark:text-[#C5A45B] font-semibold whitespace-nowrap">
-          {pageMeta.surah.name_simple} (Juz {pageMeta.juz.juz_number})
-        </div>
+        {/* Secondary quick bookmark button */}
+        <button
+          onClick={openBookmarkModal}
+          className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 shrink-0 ${
+            bookmarked
+              ? 'bg-[#C5A45B]/20 text-[#176B45] dark:text-[#C5A45B] border border-[#C5A45B]'
+              : 'bg-black/5 dark:bg-white/10 hover:bg-black/10 text-slate-700 dark:text-slate-200'
+          }`}
+          title="Gérer le signet de cette page"
+        >
+          <Bookmark className={`w-3.5 h-3.5 ${bookmarked ? 'fill-[#C5A45B] text-[#C5A45B]' : ''}`} />
+          <span>{bookmarked ? 'Signet enregistré' : 'Ajouter aux signets'}</span>
+        </button>
       </div>
 
-      {/* ================= TAFSIR WOLOF DRAWER / ACCORDION ================= */}
+      {/* ================= MODAL AJOUTER AUX SIGNETS (Demande 1) ================= */}
+      {isBookmarkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in"
+          onClick={() => setIsBookmarkModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-[#1a1a1a] rounded-2xl p-6 border-2 border-[#C5A45B] max-w-md w-full shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Bookmark className="w-5 h-5 text-[#C5A45B] fill-[#C5A45B]" />
+                <h3 className="font-bold text-base text-[#176B45] dark:text-[#C5A45B]">
+                  {bookmarked ? 'Signet de la page' : 'Ajouter aux signets'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsBookmarkModalOpen(false)}
+                className="text-slate-400 hover:text-black dark:hover:text-white p-1 rounded-full"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Page Info */}
+            <div className="bg-[#176B45]/10 dark:bg-white/5 rounded-xl p-3 border border-[#C5A45B]/30 flex items-center justify-between">
+              <div>
+                <p className="font-bold text-sm text-[#176B45] dark:text-[#C5A45B]">
+                  Page {page} / 604
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Sourate {pageMeta.surah.name_simple} ({pageMeta.surah.name_arabic}) · Juz {pageMeta.juz.juz_number}
+                </p>
+              </div>
+              <span className="text-xs font-mono font-bold bg-[#C5A45B] text-[#176B45] px-2 py-1 rounded">
+                Xët {page}
+              </span>
+            </div>
+
+            {/* Note input */}
+            <div>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-[#176B45] dark:text-[#C5A45B]" />
+                <span>Note personnelle (facultatif):</span>
+              </label>
+              <textarea
+                rows={2}
+                value={bookmarkNote}
+                onChange={(e) => setBookmarkNote(e.target.value)}
+                placeholder="Ex: J'en suis arrêté ici, verset à méditer, lecture du vendredi..."
+                className="w-full bg-[#F8F5EA] dark:bg-[#222] border border-[#C5A45B]/40 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:border-[#176B45]"
+              />
+            </div>
+
+            {/* Category selection */}
+            <div>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1.5">
+                <Tag className="w-3.5 h-3.5 text-[#176B45] dark:text-[#C5A45B]" />
+                <span>Catégorie:</span>
+              </label>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {[
+                  { id: 'general', label: 'Général' },
+                  { id: 'meditation', label: 'Méditation' },
+                  { id: 'doua', label: 'Doua / Ñaan' },
+                  { id: 'revision', label: 'Révision' },
+                ].map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setBookmarkCategory(c.id as any)}
+                    className={`py-1.5 px-2 rounded-lg border text-center transition-all ${
+                      bookmarkCategory === c.id
+                        ? 'bg-[#176B45] text-white font-bold border-[#176B45]'
+                        : 'bg-black/5 dark:bg-white/5 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="pt-2 flex items-center justify-between gap-2 border-t border-slate-100 dark:border-slate-800">
+              {bookmarked ? (
+                <button
+                  onClick={handleRemoveBookmark}
+                  className="px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-colors"
+                >
+                  Supprimer le signet
+                </button>
+              ) : (
+                <button
+                  onClick={() => setIsBookmarkModalOpen(false)}
+                  className="px-3 py-2 text-xs text-muted-foreground hover:text-black dark:hover:text-white"
+                >
+                  Annuler
+                </button>
+              )}
+
+              <button
+                onClick={handleSaveBookmark}
+                className="px-5 py-2.5 bg-[#176B45] hover:bg-[#1f8054] text-white font-bold text-xs sm:text-sm rounded-xl transition-all shadow flex items-center gap-1.5"
+              >
+                <BookmarkCheck className="w-4 h-4" />
+                <span>{bookmarked ? 'Mettre à jour le signet' : 'Enregistrer dans la base'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= TAFSIR WOLOF & VERSETS DE LA PAGE ================= */}
       {showTafsirDrawer && (
         <div
           className={`w-full max-w-2xl mt-4 bg-[#F8F5EA] dark:bg-[#1E1E1E] rounded-xl p-4 sm:p-6 border-2 border-[#C5A45B] shadow-xl text-left animate-in fade-in duration-200 transition-all duration-500 ${
@@ -672,7 +1101,7 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-[#C5A45B]" />
               <h3 className="font-bold text-base text-[#176B45] dark:text-[#C5A45B]">
-                Tafsiir ci Wolof – Xët {page} ({pageMeta.surah.name_simple})
+                Versets & Tafsiir – Xët {page} ({pageMeta.surah.name_simple})
               </h3>
             </div>
             <button
@@ -683,9 +1112,9 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
             </button>
           </div>
 
-          {versesOnPage.length > 0 ? (
+          {pageVerses.length > 0 ? (
             <div className="space-y-6">
-              {versesOnPage.map((v) => (
+              {pageVerses.map((v) => (
                 <div
                   key={v.id}
                   className="bg-white/80 dark:bg-black/30 rounded-lg p-4 border border-[#C5A45B]/30 shadow-sm"
@@ -716,22 +1145,70 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
                     {v.text_uthmani}
                   </p>
 
-                  {/* Wolof Translation */}
-                  <div className="bg-[#176B45]/5 dark:bg-white/5 p-3 rounded border-l-3 border-[#C5A45B] mb-3">
-                    <p className="text-xs font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider mb-1">
-                      Tekki ci Wolof:
-                    </p>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-relaxed">
-                      {v.translation_wolof}
-                    </p>
-                  </div>
+                  {/* 1. WOLOF LANGUAGE: Show ONLY Wolof */}
+                  {language === 'wo' && (
+                    <>
+                      <div className="bg-[#176B45]/5 dark:bg-white/5 p-3 rounded border-l-3 border-[#C5A45B] mb-3">
+                        <p className="text-xs font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider mb-1">
+                          Tekki ci Wolof:
+                        </p>
+                        {v.translation_wolof ? (
+                          <p className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-relaxed">
+                            {v.translation_wolof}
+                          </p>
+                        ) : (
+                          <p className="text-sm italic text-amber-800/80 dark:text-amber-300/80">
+                            {t.wolofUnavailable}
+                          </p>
+                        )}
+                      </div>
 
-                  {/* Wolof Tafsir */}
-                  {v.tafsir_wolof && (
-                    <div className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-line leading-relaxed bg-[#F8F5EA] dark:bg-black/20 p-3 rounded">
-                      {v.tafsir_wolof}
+                      {/* Wolof Tafsir if available */}
+                      {v.tafsir_wolof && (
+                        <div className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-line leading-relaxed bg-[#F8F5EA] dark:bg-black/20 p-3 rounded">
+                          {v.tafsir_wolof}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* 2. FRENCH LANGUAGE: Show ONLY French */}
+                  {language === 'fr' && (
+                    <div className="bg-[#176B45]/5 dark:bg-white/5 p-3 rounded border-l-3 border-[#176B45] mb-3">
+                      <p className="text-xs font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider mb-1">
+                        Traduction française:
+                      </p>
+                      {v.translation_french ? (
+                        <p className="text-sm font-normal text-slate-800 dark:text-slate-200 leading-relaxed">
+                          « {v.translation_french} »
+                        </p>
+                      ) : (
+                        <p className="text-sm italic text-slate-500">
+                          {t.translationUnavailable}
+                        </p>
+                      )}
                     </div>
                   )}
+
+                  {/* 3. ENGLISH LANGUAGE: Show ONLY English */}
+                  {language === 'en' && (
+                    <div className="bg-[#176B45]/5 dark:bg-white/5 p-3 rounded border-l-3 border-[#176B45] mb-3">
+                      <p className="text-xs font-bold text-[#176B45] dark:text-[#C5A45B] uppercase tracking-wider mb-1">
+                        English Translation:
+                      </p>
+                      {v.translation_english ? (
+                        <p className="text-sm font-normal text-slate-800 dark:text-slate-200 leading-relaxed">
+                          "{v.translation_english}"
+                        </p>
+                      ) : (
+                        <p className="text-sm italic text-slate-500">
+                          {t.translationUnavailable}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 4. ARABIC LANGUAGE: Pure Arabic only */}
                 </div>
               ))}
             </div>
@@ -739,10 +1216,7 @@ export const MushafReader: React.FC<MushafReaderProps> = ({
             <div className="py-6 text-center text-muted-foreground">
               <Info className="w-8 h-8 mx-auto text-[#C5A45B] mb-2" />
               <p className="text-sm font-medium">
-                Tafsir wolof pour cette page disponible dans la section Tafsir.
-              </p>
-              <p className="text-xs mt-1">
-                Vous pouvez également enrichir les traductions wolof dans l'espace Administration.
+                Chargement des versets de la page {page}...
               </p>
             </div>
           )}

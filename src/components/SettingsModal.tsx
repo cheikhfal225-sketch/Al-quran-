@@ -82,11 +82,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block mb-2">
             Langue de l'application (Làmmiñ)
           </label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
-              { id: 'wo', label: 'Wolof (Senegaal)' },
+              { id: 'wo', label: 'Wolof' },
               { id: 'fr', label: 'Français' },
               { id: 'ar', label: 'العربية' },
+              { id: 'en', label: 'English' },
             ].map((l) => (
               <button
                 key={l.id}
